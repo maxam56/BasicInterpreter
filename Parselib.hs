@@ -20,63 +20,60 @@ combinators that were not discussed in the article for reasons of space:
 ---------------------------------------------------------------------}
 
 module Parselib
-   (Parser, item, sat, (+++), string, many, many1, sepby, sepby1,
+   (Parser, Environment, Sexpr(..), item, sat, (+++), string, many, many1, sepby, sepby1,
     chainl, chainl1, char, digit, lower, upper, letter, alphanum,
-    symb, ident, nat, int, token, apply, parse, space, integer, natural) where
+    symb, ident, nat, int, token, parse, space, integer, natural) where
 
-import Data.Char
+import System.IO
+import System.Environment
 import Control.Monad
+import Control.Monad.State
+import Control.Monad.Reader hiding (ask)
+import Control.Monad.Trans
+import Control.Monad.Trans.State hiding (get, put)
+import Control.Monad.Trans.Reader
+import Control.Monad.IO.Class --liftIO
+import Data.Char hiding (Control)
+import Data.Array.IO
 import Control.Applicative hiding (many)
 
 infixr 5 +++
 
 -- Monad of parsers: -------------------------------------------------
+type Parser a = ReaderT Environment (StateT String IO) a
+type Environment = (IOArray Char String, IOArray Int String, IOArray Int Int, IOArray Char Sexpr)
 
-newtype Parser a = Parser (String -> [(a,String)])
+data Sexpr = Symbol String | Variable Char | Number Float | Boolean Bool | Input (Char, String) | Let (Char, String) | Prints [Sexpr] | If (Bool, Int)  | GoSub Int | For Char Int Int Int| Next Char | Control Int | Void | Failed | End
 
-instance Alternative Parser where
-  (<|>) = mplus
-  empty = mzero
+instance Eq Sexpr where
+  Symbol x == Symbol y = x == y
+  Number x == Number y = x == y
+  Boolean x == Boolean y = x == y
 
-instance Functor Parser where
-  fmap = liftM
+instance Show Sexpr where
+  show (Symbol x) = x
+  show (Number x) = show x
+  show (Boolean x) = show x
+  show Failed = "Failed"
+  --show (Variable c) = 
+  show (Let (c, i)) = (show c) ++ "=" ++ i
 
-instance Applicative Parser where
-  pure = return
-  (<*>) = ap
-
-instance Monad Parser where
-   return a      = Parser (\cs -> [(a,cs)])
-   p >>= f       = Parser (\cs -> concat [parse (f a) cs' |
-                                     (a,cs') <- parse p cs])
-
-instance MonadPlus Parser where
-   mzero          = Parser (\cs -> [])
-   p `mplus` q    = Parser (\cs -> parse p cs ++ parse q cs)
-
--- Other parsing primitives: -----------------------------------------
-
-parse           :: Parser a -> String -> [(a,String)]
-parse (Parser p) = p
+parse p = runStateT p
 
 item            :: Parser Char
-item             = Parser (\cs -> case cs of
-                                     ""     -> []
-                                     (c:cs) -> [(c,cs)])
-
+item             = do {(c:cs) <- get; put cs; return c}
+                           
 sat             :: (Char -> Bool) -> Parser Char
 sat p            = do {c <- item; if p c then return c else mzero}
 
 -- Efficiency improving combinators: ---------------------------------
 
-force           :: Parser a -> Parser a
-force p          = Parser (\cs -> let xs = parse p cs in
-                              (fst (head xs), snd (head xs)) : tail xs)
+--force           :: Parser a -> Parser a
+--force p          = Parser (\cs -> let xs = parse p cs in
+--                              (fst (head xs), snd (head xs)) : tail xs)
 
 (+++)           :: Parser a -> Parser a -> Parser a
-p +++ q          = Parser (\cs -> case parse (p `mplus` q) cs of
-                                     []     -> []
-                                     (x:xs) -> [x])
+p +++ q          = p `mplus` q
 
 -- Recursion combinators: --------------------------------------------
 
@@ -85,7 +82,7 @@ string ""        = return ""
 string (c:cs)    = do {char c; string cs; return (c:cs)}
 
 many            :: Parser a -> Parser [a]
-many p           = force (many1 p +++ return [])
+many p           = many1 p +++ return mzero
 
 many1           :: Parser a -> Parser [a]
 many1 p          = do {a <- p; as <- many p; return (a:as)}
@@ -155,21 +152,3 @@ space            = many (sat isSpace)
 
 token           :: Parser a -> Parser a
 token p          = do {a <- p; space; return a}
-
-apply           :: Parser a -> String -> [(a,String)]
-apply p          = parse (do {space; p})
-
--- Example parser for arithmetic expressions: ------------------------
---
--- expr  :: Parser Int
--- addop :: Parser (Int -> Int -> Int)
--- mulop :: Parser (Int -> Int -> Int)
---
--- expr   = term   `chainl1` addop
--- term   = factor `chainl1` mulop
--- factor = token digit +++ do {symb "("; n <- expr; symb ")"; return n}
---
--- addop  = do {symb "+"; return (+)} +++ do {symb "-"; return (-)}
--- mulop  = do {symb "*"; return (*)} +++ do {symb "/"; return (div)}
---
-----------------------------------------------------------------------

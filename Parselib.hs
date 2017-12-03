@@ -35,15 +35,18 @@ import Control.Monad.Trans.Reader
 import Control.Monad.IO.Class --liftIO
 import Data.Char hiding (Control)
 import Data.Array.IO
+import Data.IORef
 import Control.Applicative hiding (many)
 
 infixr 5 +++
 
 -- Monad of parsers: -------------------------------------------------
 type Parser a = ReaderT Environment (StateT String IO) a
-type Environment = (IOArray Char String, IOArray Int String, IOArray Int Int, IOArray Char Sexpr)
+type Environment = (IOArray Char Sexpr, IOArray Int String, IOArray Int Int, IORef Sexpr)
 
-data Sexpr = Symbol String | Variable Char | Number Float | Boolean Bool | Input (Char, String) | Let (Char, String) | Prints [Sexpr] | If (Bool, Int)  | GoSub Int | For Char Int Int Int| Next Char | Control Int | Void | Failed | End
+data Sexpr = Symbol String | Variable Char | Number Float | Boolean Bool | Input (Char, String) |
+             Let (Char, Sexpr) | Prints [Sexpr] | If (Bool, Int)  | GoSub Int Int | For Char Int Int Int|
+             Next Char | Control Int | Return | Void | Failed | End
 
 instance Eq Sexpr where
   Symbol x == Symbol y = x == y
@@ -51,12 +54,13 @@ instance Eq Sexpr where
   Boolean x == Boolean y = x == y
 
 instance Show Sexpr where
-  show (Symbol x) = x
-  show (Number x) = show x
+  show (Symbol x) = "Symbol: " ++ x
+  show (Number x) = "Number: " ++ (show x)
   show (Boolean x) = show x
+  show (For _ f _ _) = show f
   show Failed = "Failed"
   --show (Variable c) = 
-  show (Let (c, i)) = (show c) ++ "=" ++ i
+  show (Let (c, i)) = (show c) ++ "=" ++ (show i)
 
 parse p = runStateT p
 

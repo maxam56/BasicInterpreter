@@ -21,7 +21,7 @@ combinators that were not discussed in the article for reasons of space:
 
 module Parselib
    (Parser, Environment, Sexpr(..), item, sat, (+++), string, many, many1, sepby, sepby1,
-    chainl, chainl1, char, digit, lower, upper, letter, alphanum,
+    chainl, chainl1, char, digit, lower, upper, letter, number, alphanum,
     symb, ident, nat, int, token, parse, space, integer, natural) where
 
 import System.IO
@@ -45,7 +45,7 @@ type Parser a = ReaderT Environment (StateT String IO) a
 type Environment = (IOArray Char Sexpr, IOArray Int String, IOArray Int Int, IORef Sexpr)
 
 data Sexpr = Symbol String | Variable Char | Number Float | Boolean Bool | Input (Char, String) |
-             Let (Char, Sexpr) | Prints [Sexpr] | If (Bool, Int)  | GoSub Int Int | For Char Int Int Int|
+             Let (Char, Sexpr) | Prints [Sexpr] | PrintBang [Sexpr] | If (Bool, Int)  | GoSub Int Int | Goto Int | For Char Int Int Int|
              Next Char | Control Int | Return | Void | Failed | End
 
 instance Eq Sexpr where
@@ -54,7 +54,7 @@ instance Eq Sexpr where
   Boolean x == Boolean y = x == y
 
 instance Show Sexpr where
-  show (Symbol x) = "Symbol: " ++ x
+  show (Symbol x) = x
   show (Number x) = "Number: " ++ (show x)
   show (Boolean x) = show x
   show (For _ f _ _) = show f
@@ -122,6 +122,9 @@ upper            = sat isUpper
 
 letter          :: Parser Char
 letter           = sat isAlpha
+
+number          :: Parser Char
+number          = sat isNumber
 
 alphanum        :: Parser Char
 alphanum         = sat isAlphaNum

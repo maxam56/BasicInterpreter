@@ -42,11 +42,11 @@ infixr 5 +++
 
 -- Monad of parsers: -------------------------------------------------
 type Parser a = ReaderT Environment (StateT String IO) a
-type Environment = (IOArray Char Sexpr, IOArray Int String, IOArray Int Int, IORef Sexpr)
+type Environment = (IOArray (Char, Int) Sexpr, IOArray Int String, IOArray Int Int, IORef Sexpr)
 
-data Sexpr = Symbol String | Variable Char | Number Float | Boolean Bool | Input (Char, String) |
-             Let (Char, Sexpr) | Prints [Sexpr] | PrintBang [Sexpr] | If (Bool, Int)  | GoSub Int Int | Goto Int | For Char Int Int Int|
-             Next Char | Control Int | Return | Void | Failed | End
+data Sexpr = Symbol String | Variable (Char, Int) | Number Float | Boolean Bool | Input ((Char, Int), String) |
+             Let ((Char, Int), Sexpr) | Prints [Sexpr] | PrintBang [Sexpr] | If (Bool, Int)  | GoSub Int Int | Goto Int | For (Char, Int) Int Int Int|
+             Next (Char, Int) | Control Int | Return | Void | Failed | End
 
 instance Eq Sexpr where
   Symbol x == Symbol y = x == y
@@ -55,7 +55,7 @@ instance Eq Sexpr where
 
 instance Show Sexpr where
   show (Symbol x) = x
-  show (Number x) = "Number: " ++ (show x)
+  show (Number x) = show x
   show (Boolean x) = show x
   show (For _ f _ _) = show f
   show Failed = "Failed"

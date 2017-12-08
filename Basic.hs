@@ -1,5 +1,25 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-
+CS 456 Basic Interpreter - Nicholas Spurlock
 
+This program accepts lines of basic (In scheme list form) and interprets them into haskell
+Right now it works on sample programs up to and including hamarabi.bas
+
+This turned out to be partially a basic parser, but the lines between parser and interpreter are
+blurred.  Because of this the program is not in a very traditionally functional form but mimics
+an imperative language (perhaps that's ok because we're interpreting one).
+
+There's plenty of room for improvement.  The unary and binary functions could definately be handled
+better, ideally as a list of touples/triples where the function symbol could be parsed and used to
+look up the actual function.  I briefly played with this, but didn't have the time to refactor things to get it to work.
+
+Also, Parslib has been hijacked.  Most of the parsing library is the same, but I've added a data type Sexpr that holds the basic types, and an environment I pass around.  Also, the parser type has been changed.  I did this to allow for variable lookup during parsing. This seemed more efficient than essentially parsing an expression twice, but the price I payed was that everything is IO (probably not worth it in the long run, we loose out on the functional advantages).
+
+I'm not sure the games work correctly.  Looking at the code for guess, it always seems to choose the number 2 unless your range is 1.  Also,
+the math for the bushels doesn't work correctly so the numbers are off. Looking at the site for basic games, these games have been modified (presumably to check functionality) and the math doesn't seem to work all the time.
+-}
+
+
+{-# LANGUAGE FlexibleContexts #-}
 import Parselib
 import Parselib(Sexpr(..))
 import System.IO
@@ -30,6 +50,11 @@ symbolic x = legalFirst x || isDigit x
 symbol :: Parser Sexpr
 symbol = do {c <- sat legalFirst; s <- many (sat symbolic); return (Symbol (c:s))}
 
+index' :: Parser (Char, Int)
+index' = do
+  f:l <- token $ many alphanum
+  if l == [] then return (f, 0) else return (f, (read l::Int))
+  
 varExpOrNum :: Sexpr -> Parser Float
 varExpOrNum sexpr@(Number v) = return v
 varExpOrNum (Symbol s) = do
@@ -45,8 +70,8 @@ varExpOrNum _ = mzero
 variable :: Parser Float
 variable = do
   (table,_,_,_) <- ask
-  c <- token $ letter
-  s <- liftIO $ readArray table c
+  i <- index'
+  s <- liftIO $ readArray table i
   v <- varExpOrNum s
   return v
 
@@ -68,7 +93,7 @@ negFloat = do
   lst <- token $ many (sat isDigit)
   return (read ((s:fst) ++ [d] ++ lst) :: Float)
 
---unary :: Parser Sexpr
+--unary :: Parser Sexpr --This could also be pattern matched
 unary = log' +++ int' +++ abs' +++ rnd' +++ sqrt'
 int' = do
   symb "int"
@@ -124,45 +149,46 @@ comparison = eq +++ gt +++ lt +++ gtEq +++ ltEq
 
 value = floatOrInt +++ variable
 
+--This should be pattern matched
 eq = do
   token $ char '('
-  v1 <- token $ value
+  (Number e1) <- expr
   symb "="
-  v2 <- token $ value
+  (Number e2) <- expr
   token $ char ')'
-  let b = ((==) v1 v2)
+  let b = ((==) e1 e2)
   return b
 gt = do
   token $ char '('
-  v1 <- token $ value
+  (Number e1) <- expr
   symb ">"
-  v2 <- token $ value
+  (Number e2) <- expr
   token $ char ')'
-  let b = ((>) v1 v2)
+  let b = ((>) e1 e2)
   return b
 lt = do
   token $ char '('
-  v1 <- token $ value
+  (Number e1) <- expr
   symb "<"
-  v2 <- token $ value
+  (Number e2) <- expr
   token $ char ')'
-  let b = ((<) v1 v2)
+  let b = ((<) e1 e2)
   return b
 gtEq = do
   token $ char '('
-  v1 <- token $ value
+  (Number e1) <- expr
   symb ">="
-  v2 <- token $ value
+  (Number e2) <- expr
   token $ char ')'
-  let b = ((>=) v1 v2)
+  let b = ((>=) e1 e2)
   return b
 ltEq = do
   token $ char '('
-  v1 <- token $ value
+  (Number e1) <- expr
   symb "<="
-  v2 <- token $ value
+  (Number e2) <- expr
   token $ char ')'
-  let b = ((<=) v1 v2)
+  let b = ((<=) e1 e2)
   return b
 
 parse' :: String -> Environment -> IO Sexpr
@@ -180,21 +206,21 @@ input = do
   char '"'
   q <- many (sat (/= '"'))
   token $ char '"'
-  c <- token $ letter
+  i <- index'
   char ')'  
-  return (Input (c, q))
+  return (Input (i, q))
 
 let' :: Parser Sexpr
 let' = do
   linenum
   symb "let"
-  c <- token $ sat isAlpha
+  i <- index'
   token $ char '='
   s <- many item
   let s' = take ((length s) - 1) s
   put s'
   e <- expr
-  return (Let (c, e))
+  return (Let (i, e))
 
 prnt :: Parser Sexpr
 prnt = s +++ expr
@@ -251,18 +277,18 @@ goto = do
 for = do
   n <- linenum
   symb "for"
-  c <- token $ letter
+  i <- index'
   token $ char '='
   (Number f) <- expr
   symb "to"
   (Number l) <- expr
-  return (For c (floor f) (floor l) 0)
+  return (For i (floor f) (floor l) 0)
 
 next = do
   linenum
   symb "next"
-  c <- letter
-  return (Next c)
+  i <- index'
+  return (Next i)
 
 return' = do
   linenum
@@ -280,12 +306,11 @@ tab = do
 --Eval--------------------------------------
 
 eval :: Sexpr -> ReaderT Environment IO Sexpr
-eval sexpr@(Input (c, q)) = do
+eval sexpr@(Input (i, q)) = do
   (table, _,_,_) <- ask
   liftIO $ putStrLn q
   v <- liftIO $ getLine
-  liftIO $ writeArray table c (Symbol v)
-  --liftIO $ putStrLn v
+  liftIO $ writeArray table i (Symbol v)
   return Void
 
 eval sexpr@(Symbol s) = return sexpr 
@@ -293,14 +318,15 @@ eval sexpr@(Symbol s) = return sexpr
 eval Void = return Void
 --  return (Symbol "Failed")
 
-eval sexpr@(Let (c, s)) = do
+eval sexpr@(Let (i, s)) = do
   (table,_,_,_) <- ask
-  liftIO $ writeArray table c s
+  liftIO $ writeArray table i s
+  --putVar c s table
   return Void
 
-eval sexpr@(Variable c) = do
+eval sexpr@(Variable i) = do
   (table, _,_,_) <- ask
-  v <- liftIO $ readArray table c
+  v <- liftIO $ readArray table i
   liftIO $ putStrLn $ (show v)
   return Void
 
@@ -331,12 +357,12 @@ eval sexpr@(Goto ln) = do
   
 eval sexpr@(For c f t l) = return sexpr
 
-eval sexpr@(Next c) = do
+eval sexpr@(Next i) = do
   (table,_,_,_) <- ask
-  (For _ f t l) <- liftIO $ readArray table c
+  (For _ f t l) <- liftIO $ readArray table i
   if f >= t then return Void else do
     --liftIO . putStrLn $ "Next"
-    liftIO $ writeArray table c (For c (f+1) t l)
+    liftIO $ writeArray table i (For i (f+1) t l)
     return (Control l)
 
 eval sexpr@Return = do
@@ -391,9 +417,9 @@ loadProgram h ln pairs prog = do
 main :: IO ()
 main = do
   hSetBuffering stdout NoBuffering
-  arr1 <- newArray ('a', 'z') Void :: IO (IOArray Char Sexpr) --symbol table
-  arr2 <- newArray (1,500) "" :: IO (IOArray Int String) --interp line # -> prog lines
-  arr3 <- newArray (1,500) 500 :: IO (IOArray Int Int) --prog line # to interp line # mapping
+  arr1 <- newArray (('a',0), ('z',25)) Void :: IO (IOArray (Char, Int) Sexpr) --symbol table
+  arr2 <- newArray (1,10000) "" :: IO (IOArray Int String) --interp line # -> prog lines - This could just be a normal array
+  arr3 <- newArray (1,10000) 10000 :: IO (IOArray Int Int) --prog line # to interp line # mapping - could also be a normal array
   ref <- newIORef Void :: IO (IORef Sexpr)
   let env = (arr1, arr2, arr3, ref)
   args <- getArgs
@@ -407,3 +433,249 @@ main = do
     _ -> do
       putStrLn "Failed to read Basic program input"
       return ()
+
+
+{- Examples
+    foo.bas
+λ> :main "foo.bas"
+Test
+What is A
+1
+What is B
+4
+What is C
+1
+12.0
+
+     quadratic1.bas
+λ> :main "quadratic1.bas"
+What is the value of A
+1
+What is the value of B
+4
+What is the value of C
+1
+The 1st root is: -0.2679491
+The 2nd root is: -3.732051
+
+      quadratic2.bas
+λ> :main "quadratic2.bas"
+What is the value of A
+1
+What is the value of B
+5
+What is the value of C
+1
+The 1st root is: -0.2087121
+The 2nd root is: -4.791288
+
+λ> :main "quadratic2.bas"
+What is the value of A
+1
+What is the value of B
+1
+What is the value of C
+1
+Imaginary roots.
+
+    guess.bas
+λ> :main "guess.bas"
+                                 GUESS
+               CREATIVE COMPUTING MORRISTOWN, NEW JERSEY
+
+THIS IS A NUMBER GUESSING GAME. I'LL THINK
+OF A NUMBER BETWEEN 1 AND ANY LIMIT YOU WANT.
+THEN YOU HAVE TO GUESS WHAT IT IS.
+
+WHAT LIMIT DO YOU WANT
+25
+
+I'M THINKING OF A NUMBER BETWEEN 1 AND 25.0
+
+WHAT IS YOUR GUESS
+23
+
+TOO HIGH. TRY A SMALLER ANSWER.
+
+WHAT IS YOUR GUESS
+24
+
+TOO HIGH. TRY A SMALLER ANSWER.
+
+WHAT IS YOUR GUESS
+1
+
+TOO LOW. TRY A BIGGER ANSWER.
+
+WHAT IS YOUR GUESS
+4
+
+TOO HIGH. TRY A SMALLER ANSWER.
+
+WHAT IS YOUR GUESS
+2
+
+THAT'S IT! YOU GOT IT IN 5.0 TRIES.
+YOU SHOULD HAVE BEEN ABLE TO GET IT IN ONLY 2.0 TRIES.
+
+λ> :main "guess.bas"
+                                 GUESS
+               CREATIVE COMPUTING MORRISTOWN, NEW JERSEY
+
+THIS IS A NUMBER GUESSING GAME. I'LL THINK
+OF A NUMBER BETWEEN 1 AND ANY LIMIT YOU WANT.
+THEN YOU HAVE TO GUESS WHAT IT IS.
+
+WHAT LIMIT DO YOU WANT
+5
+
+I'M THINKING OF A NUMBER BETWEEN 1 AND 5.0
+
+WHAT IS YOUR GUESS
+-3
+
+ILLEGAL VALUE.
+
+WHAT IS YOUR GUESS
+3
+
+TOO HIGH. TRY A SMALLER ANSWER.
+
+WHAT IS YOUR GUESS
+1
+
+TOO LOW. TRY A BIGGER ANSWER.
+
+WHAT IS YOUR GUESS
+2
+
+THAT'S IT! YOU GOT IT IN 3.0 TRIES.
+YOU SHOULD HAVE BEEN ABLE TO GET IT IN ONLY 2.0 TRIES
+
+       hamurabi.bas
+λ> :main "hamurabi.bas"
+HAMURABI: Game of Hamurabi - Version 1.01
+
+Corona Data Systems, Inc.
+
+HAMURABI - 
+WHERE YOU GOVERN THE ANCIENT KINGDOM OF SUMERIA.
+THE OBJECT IS TO FIGURE OUT HOW THE GAME WORKS!!
+IF YOU WANT TO QUIT, SELL ALL YOUR LAND.
+
+HAMURABI, I BEG TO REPORT THAT LAST YEAR 0.0 PEOPLE
+STARVED AND 5.0 PEOPLE CAME TO THE CITY.
+THE POPULATION IS NOW 100.0.
+WE HARVESTED 3000.0 BUSHELS AT 3.0 BUSHELS PER ACRE.
+RATS DESTROYED 200.0 BUSHELS, LEAVING 2800.0 BUSHELS
+IN THE STOREHOUSES.
+THE CITY OWNS 1000.0 ACRES OF LAND.
+LAND IS WORTH 23.0 BUSHELS PER ACRE.
+
+HAMURABI...
+
+HOW MANY ACRES DO YOU WISH TO BUY
+50
+
+HOW MANY ACRES DO YOU WISH TO SELL
+0
+
+HOW MANY BUSHELS SHALL WE DISTRIBUTE AS FOOD
+200
+
+HOW MANY ACRES SHALL WE PLANT
+50
+
+
+HAMURABI, I BEG TO REPORT THAT LAST YEAR 90.0 PEOPLE
+STARVED AND -2.0 PEOPLE CAME TO THE CITY.
+THE POPULATION IS NOW 8.0.
+WE HARVESTED 300.0 BUSHELS AT 6.0 BUSHELS PER ACRE.
+RATS DESTROYED 120.0 BUSHELS, LEAVING 1605.0 BUSHELS
+IN THE STOREHOUSES.
+THE CITY OWNS 1050.0 ACRES OF LAND.
+LAND IS WORTH 23.0 BUSHELS PER ACRE.
+
+HAMURABI...
+
+HOW MANY ACRES DO YOU WISH TO BUY
+50
+
+HOW MANY ACRES DO YOU WISH TO SELL
+25
+
+HOW MANY BUSHELS SHALL WE DISTRIBUTE AS FOOD
+200
+
+HOW MANY ACRES SHALL WE PLANT
+100
+
+HAMURABI, THINK AGAIN - 
+YOU ONLY HAVE 8.0 PEOPLE, 1075.0 ACRES, AND 
+830.0 BUSHELS IN STOREHOUSES.
+HOW MANY ACRES SHALL WE PLANT
+5
+
+
+HAMURABI, I BEG TO REPORT THAT LAST YEAR 0.0 PEOPLE
+STARVED AND 0.0 PEOPLE CAME TO THE CITY.
+THE POPULATION IS NOW 8.0.
+WE HARVESTED 30.0 BUSHELS AT 6.0 BUSHELS PER ACRE.
+RATS DESTROYED 60.0 BUSHELS, LEAVING 798.0 BUSHELS
+IN THE STOREHOUSES.
+THE CITY OWNS 1075.0 ACRES OF LAND.
+LAND IS WORTH 23.0 BUSHELS PER ACRE.
+
+HAMURABI...
+
+HOW MANY ACRES DO YOU WISH TO BUY
+0
+
+HOW MANY ACRES DO YOU WISH TO SELL
+0
+
+HOW MANY BUSHELS SHALL WE DISTRIBUTE AS FOOD
+500
+
+HOW MANY ACRES SHALL WE PLANT
+0
+
+
+HAMURABI, I BEG TO REPORT THAT LAST YEAR 0.0 PEOPLE
+STARVED AND 9.0 PEOPLE CAME TO THE CITY.
+THE POPULATION IS NOW 17.0.
+WE HARVESTED 0.0 BUSHELS AT 6.0 BUSHELS PER ACRE.
+RATS DESTROYED 20.0 BUSHELS, LEAVING 278.0 BUSHELS
+IN THE STOREHOUSES.
+THE CITY OWNS 1075.0 ACRES OF LAND.
+LAND IS WORTH 23.0 BUSHELS PER ACRE.
+
+HAMURABI...
+
+HOW MANY ACRES DO YOU WISH TO BUY
+0
+
+HOW MANY ACRES DO YOU WISH TO SELL
+0
+
+HOW MANY BUSHELS SHALL WE DISTRIBUTE AS FOOD
+0
+
+HOW MANY ACRES SHALL WE PLANT
+0
+
+
+HAMURABI, I BEG TO REPORT THAT LAST YEAR 17.0 PEOPLE
+STARVED AND 0.0 PEOPLE CAME TO THE CITY.
+THE POPULATION IS NOW 0.0.
+WE HARVESTED 0.0 BUSHELS AT 6.0 BUSHELS PER ACRE.
+RATS DESTROYED 19.0 BUSHELS, LEAVING 259.0 BUSHELS
+IN THE STOREHOUSES.
+THE CITY OWNS 1075.0 ACRES OF LAND.
+LAND IS WORTH 23.0 BUSHELS PER ACRE.
+
+HAMURABI...
+
+HOW MANY ACRES DO YOU WISH TO BUY
+
+-}
